@@ -1,0 +1,112 @@
+var FLDAS = ee.ImageCollection("NASA/FLDAS/NOAH01/C/GL/M/V001");
+var FAO = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2");
+
+
+var Colombia = FAO.filter(ee.Filter.eq('ADM0_NAME','Colombia'));
+
+function recortarImg(img){
+  return img.clip(Colombia).copyProperties(img,['system:time_start']);
+}
+
+// Agregar banda temporal
+var crearBandaT = function(image) {
+  // Escalar el tiempo
+  return image.addBands(image.metadata('system:time_start').divide(1e18));
+};
+
+// Agregar una imagen como constante de 1s
+var crearBandaC = function(image) {
+  return ee.Image(1).addBands(image);
+};
+
+// Filtrar variables
+var variables = FLDAS
+  .filterDate(ee.Date('2006-01-01'), ee.Date('2025-01-01'))
+  .map(crearBandaT)
+  .map(crearBandaC).map(recortarImg)
+  .select(['constant', 'system:time_start', 'Evap_tavg']);
+
+// Aplicar mínimos cuadrados orfinarios para los coeficientes.
+var linearRegression = variables.reduce(
+  ee.Reducer.linearRegression({
+    numX: 2, //Dos variables independientes (constant y tiempo)
+    numY: 1 //Dos variables dependientes (precipitación y temp)
+}));
+
+// Aplicar regresión lineal robusta para los coeficientes.
+var robustLinearRegression = variables.reduce(
+  ee.Reducer.robustLinearRegression({
+    numX: 2,
+    numY: 1
+}));
+
+print('RLS: ', linearRegression);
+print('RLSR: ', robustLinearRegression);
+
+
+// Etiquetar la información a lo largo de cada eje de arreglos
+var nombresBandas = [['constante', 'tiempo'], // 0-axis variation.
+                 ['evap']]; // 1-axis variation.
+
+// Aplanar arreglo de imágenes para conseguir imágenes multibanda acorde con las etiquetas.
+var lrImage = linearRegression.select(['coefficients']).arrayFlatten(nombresBandas);
+var rlrImage = robustLinearRegression.select(['coefficients']).arrayFlatten(nombresBandas);
+
+print('Coeficienciente rls: ',lrImage);
+print('Coeficienciente rls: ', rlrImage);
+
+// Mínimos cuádrados ordinarios
+Map.centerObject(Colombia,5);
+Map.addLayer(lrImage,
+  {bands: ['constante_evap', 'tiempo_evap']}, 'OLS');
+
+
+// Comparar un punto específico:
+print('OLS estimates:', lrImage.reduceRegion({
+  reducer: ee.Reducer.first(),
+  geometry: ee.Geometry.Point([-76.0, 3.0]),
+  scale: 11000
+}));
+
+print('Robust estimates:', rlrImage.reduceRegion({
+  reducer: ee.Reducer.first(),
+  geometry: ee.Geometry.Point([-76.0, 3.0]),
+  scale: 11000
+}));
+
+/*----------------*/
+
+
+var cearBandaTiempoPred = function(image, futureDate) {
+  // Convertir la fecha futura a milisegundos 
+  var futureTime = ee.Date(futureDate).millis();
+  // Escalar el tiempo futuro (usando el mismo divisor empleado)
+  var scaledFutureTime = ee.Number(futureTime).divide(1e18);
+  // Agregar la banda de tiempo futuro a la imagen
+  return image.addBands(ee.Image.constant(scaledFutureTime).rename('scaled_time'));
+};
+
+
+// Definir una fecha futura 
+var futureDate = '2026-01-01';
+
+// Crear una imagen sintética 
+var imagenSintetica = ee.Image.constant(0);
+
+// Aplicar la función para agregar el tiempo futuro
+var futureImage = cearBandaTiempoPred(imagenSintetica, futureDate);
+
+print('Imagen con tiempo futuro:', futureImage);
+
+
+var TempPred = futureImage.select('scaled_time').multiply(rlrImage.select('tiempo_evap')).add(rlrImage.select('constante_evap'));
+
+Map.addLayer(TempPred,{},'Temp2026');
+Map.addLayer(variables.select('Evap_tavg').mean(),{},'Evaporación prom.');
+
+
+
+
+
+
+

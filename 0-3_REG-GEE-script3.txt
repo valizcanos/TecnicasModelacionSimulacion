@@ -1,0 +1,38 @@
+var FAO = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2");
+var Bogota = 
+    /* color: #d63000 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-74.29841225092312, 4.782135339340353],
+          [-74.29841225092312, 4.574090614943999],
+          [-73.97980873529812, 4.574090614943999],
+          [-73.97980873529812, 4.782135339340353]]], null, false);
+var img = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA");
+
+var Colombia = FAO.filter(ee.Filter.eq('ADM0_NAME','Colombia'));
+
+function recortarImg(img){
+  return img.clip(Bogota).copyProperties(img,['system:time_start']);
+}
+
+
+// variables: B5 (SWIR1) independente y B6 (SWIR2) dependiente
+var imgRegress = img.select(['B5', 'B6']).map(recortarImg).median();
+
+// Calcular coeficientes de regresión 
+var linearFit = imgRegress.reduceRegion({
+  reducer: ee.Reducer.linearFit(),
+  geometry: Bogota,
+  scale: 30,
+});
+
+// Resultados
+print('Mín. Cuadrados:', linearFit);
+print('y-intercepto (Beta_0):', linearFit.get('offset'));
+print('Pendiente (Beta_1):', linearFit.get('scale'));
+
+Map.addLayer(imgRegress,{},'LS08');

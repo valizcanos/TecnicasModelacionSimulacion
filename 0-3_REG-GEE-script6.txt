@@ -1,0 +1,61 @@
+/*MCO*/
+
+var listaDeVariablesCol = ee.List([
+  [1, 1],
+  [2, 2],
+  [3, 3],
+  [4, 4],
+  [5, 5]
+]);
+
+var linearFit = ee.Dictionary(listaDeVariablesCol.reduce(ee.Reducer.linearFit()));
+
+// Resultado
+print(linearFit);
+print('Beta_0:', linearFit.get('offset'));
+print('Beta_1:', linearFit.get('scale'));
+
+var listaDeVariablesFilas = ee.List([
+  [1, 2, 3, 4, 5],
+  [1, 2, 3, 4, 5]
+]);
+
+
+var listaDeVariablesCol2 = ee.Array(listaDeVariablesFilas).transpose().toList();
+
+var linearFit2 = ee.Dictionary(listaDeVariablesCol2.reduce(ee.Reducer.linearFit()));
+
+// Inspect the result.
+print(linearFit2);
+print('Beta_0:', linearFit.get('offset'));
+print('Beta_1:', linearFit.get('scale'));
+
+/*RLS*/
+
+var Columnas = ee.List([
+  [1, 1, 1],
+  [1, 2, 2],
+  [1, 3, 3],
+  [1, 4, 4],
+  [1, 5, 5]
+]);
+
+var linearRegression = ee.Dictionary(
+  Columnas.reduce(ee.Reducer.linearRegression({
+    numX: 2,
+    numY: 1
+})));
+
+
+var coeficientes = ee.Array(linearRegression.get('coefficients')).toList();
+
+var b0 = ee.List(coeficientes.get(0)).get(0); 
+var b1 = ee.List(coeficientes.get(1)).get(0); 
+
+var residual = ee.Array(linearRegression.get('residuals')).toList().get(0);
+
+// Resultados
+print('Mínimos cuadrados', linearRegression);
+print('Beta_0:', b0);
+print('Beta_1:', b1);
+print('Residuales:', residual);

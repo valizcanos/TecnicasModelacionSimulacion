@@ -1,0 +1,121 @@
+var FAO = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2");
+var LS08 = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA");
+var SENTINEL = ee.ImageCollection("COPERNICUS/S2_HARMONIZED");
+var Bogota = 
+    /* color: #0b4a8b */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-74.20499312127437, 4.887446196120346],
+          [-74.20499312127437, 4.45492868882387],
+          [-73.97702681268062, 4.45492868882387],
+          [-73.97702681268062, 4.887446196120346]]], null, false);
+
+var Colombia = FAO.filter(ee.Filter.eq('ADM0_NAME','Colombia'));
+
+function recortarImg(img){
+  return img.clip(Bogota).copyProperties(img,['system:time_start']);
+}
+
+// banda SWIR1 en ambos sensores
+
+var l8ImgSwir1  = LS08.filterBounds(Bogota).map(recortarImg).median().select('B6');
+var s2ImgSwir1  = SENTINEL.filterBounds(Bogota).map(recortarImg).median().select('B11');
+
+Map.addLayer(l8ImgSwir1,{},'L8');
+Map.addLayer(s2ImgSwir1,{},'S2');
+
+
+//Tomar 100 puntos aleatorios del área creada
+var muestra = ee.FeatureCollection.randomPoints({
+  region: Bogota,
+  points: 100
+});
+
+print('muestra',muestra);
+
+Map.centerObject(muestra);
+
+Map.addLayer(muestra,{},'Muestra');
+
+
+// Combinar las bandas SWIR1 en una sola imagen
+var swir1Bands = s2ImgSwir1.select('B11')
+  .addBands(l8ImgSwir1.select('B6'))
+  .rename(['s2_swir1', 'l8_swir1']);
+
+// Las muestras de las bandas SWIR1 
+var imgSamp = swir1Bands.sampleRegions({
+  collection: muestra,
+  scale: 30
+}).map(function(feature) { //Agregar una característica como constante
+  return feature.set('constant', 1);
+});
+
+
+//Modelo de regresión lineal
+var regresionLineal = ee.Dictionary(imgSamp.reduceColumns({
+  reducer: ee.Reducer.linearRegression({
+    numX: 2,
+    numY: 1
+  }),
+  selectors: ['constant', 's2_swir1', 'l8_swir1']
+}));
+
+
+// Convertir los coeficientes de arreglos a listas.
+var listaCoeficientes = ee.Array(regresionLineal.get('coefficients')).toList();
+
+print(listaCoeficientes);
+
+// Extraer Beta_0 y Beta_1
+var intercep = ee.List(listaCoeficientes.get(0)); // Beta_0
+var pendiente = ee.List(listaCoeficientes.get(1)).get(0); // Beta_1
+
+// Recolectar los valores de SWIR1 a partir de los puntos muestra en una lista de listas
+var props = ee.List(['s2_swir1', 'l8_swir1']);
+var regresionVarsList = ee.List(imgSamp.reduceColumns({
+  reducer: ee.Reducer.toList().repeat(props.size()),
+  selectors: props
+}).get('list'));
+
+
+// Convertir "x" e "y" de lista a arreglo para poder gráficar
+
+var x = ee.Array(ee.List(regresionVarsList.get(0)));
+var y1 = ee.Array(ee.List(regresionVarsList.get(1)));
+
+
+// A partir de los coeficientes crear modelo
+var y2 = ee.Array(ee.List(regresionVarsList.get(0)).map(function(x) {
+  var y = ee.Number(x).multiply(pendiente).add(intercep);
+  return y;
+}));
+
+var yArr = ee.Array.cat([y1, y2], 1);
+
+print(ui.Chart.array.values({
+  array: yArr,
+  axis: 0,
+  xLabels: x})
+  .setChartType('ScatterChart')
+  .setOptions({
+    legend: {position: 'none'},
+    hAxis: {'title': 'Sentinel-2 SWIR1'},
+    vAxis: {'title': 'Landsat 8 SWIR1'},
+    series: {
+      0: {
+        pointSize: 0.2,
+        dataOpacity: 0.5,
+      },
+      1: {
+        pointSize: 0,
+        lineWidth: 2,
+      }
+    }
+  })
+);

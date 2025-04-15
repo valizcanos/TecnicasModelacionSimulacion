@@ -1,0 +1,56 @@
+var LS08 = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA");
+var FAO = ee.FeatureCollection("FAO/GAUL_SIMPLIFIED_500m/2015/level2");
+var Bogota = 
+    /* color: #98ff00 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[-74.22147261346187, 4.8518695134367915],
+          [-74.22147261346187, 4.479572830279602],
+          [-73.97153364861812, 4.479572830279602],
+          [-73.97153364861812, 4.8518695134367915]]], null, false);
+
+var Colombia = FAO.filter(ee.Filter.eq('ADM0_NAME','Colombia'));
+
+function recortarImg(img){
+  return img.clip(Bogota).copyProperties(img,['system:time_start']);
+}
+
+// Cear una nueva imagen la cual se genera al concatenar 3 imagenes
+// una constante, SWIR1 y SWIR2
+
+var img = LS08.map(recortarImg).median();
+
+var constante = ee.Image(1);
+var xVar = img.select('B5');
+var yVar = img.select('B6');
+var imgRegress = ee.Image.cat(constante, xVar, yVar);
+
+// Estimar coeficientes, tenemos 2 variables independientes, la cte. y la SWIR1
+var linearRegression = imgRegress.reduceRegion({
+  reducer: ee.Reducer.linearRegression({
+    numX: 2,
+    numY: 1
+  }),
+  geometry: Bogota,
+  scale: 30,
+});
+
+// Convertir los coeficiente de arreglo a lista.
+var coefList = ee.Array(linearRegression.get('coefficients')).toList();
+
+// Extract the y-intercept and slope.
+var b0 = ee.List(coefList.get(0)).get(0); // corte
+var b1 = ee.List(coefList.get(1)).get(0); // pendiente
+
+// Extraer los residuales
+var residuales = ee.Array(linearRegression.get('residuals')).toList().get(0);
+
+// Inspect the results.
+print('Mín. cuadrados: ', linearRegression);
+print('y-intercepto:', b0);
+print('Pendiente:', b1);
+print('Residuales:', residuales);
